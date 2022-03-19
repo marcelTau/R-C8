@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(non_snake_case)]
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -7,8 +8,8 @@ use std::io::Read;
 use std::thread;
 use std::time::Duration;
 
-const ROW: usize = 64;
-const COL: usize = 32;
+const COL: usize = 64;
+const ROW: usize = 32;
 const FONTSET: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -44,6 +45,7 @@ pub struct Chip8 {
 
 type F = fn(&mut Chip8, u16);
 
+// initialization
 impl Chip8 {
     pub fn new() -> Self {
         let m = HashMap::<u16, F>::new();
@@ -61,7 +63,30 @@ impl Chip8 {
             opcode_function: m,
         }
     }
+    pub fn setup_map(&mut self) {
+        self.opcode_function.insert(0x0000, Chip8::f_0x0000);
+        self.opcode_function.insert(0x1000, Chip8::f_0x1000);
+        self.opcode_function.insert(0x6000, Chip8::f_0x6000);
+        self.opcode_function.insert(0x7000, Chip8::f_0x7000);
+        self.opcode_function.insert(0xA000, Chip8::f_0xA000);
+        self.opcode_function.insert(0xD000, Chip8::f_0xD000);
+    }
 
+    pub fn load_game(&mut self, filename: &str) -> Result<usize, Box<dyn Error>> {
+        let mut file = fs::File::open(filename)?;
+        let read_bytes = file.read(&mut self.memory[512..])?;
+        println!("Read {} bytes from file {}", read_bytes, filename);
+        Ok(read_bytes)
+    }
+
+    pub fn load_font(&mut self) {
+        for (i, &value) in FONTSET.iter().enumerate() {
+            self.memory[i] = value;
+        }
+    }
+}
+
+impl Chip8 {
     fn clear_screen(&mut self) {
         self.graphics.fill(0);
     }
@@ -79,6 +104,48 @@ impl Chip8 {
         self.stack[self.sp as usize] = 0;
     }
 
+    // 0xDXYN: draw sprite at coordinate X,Y with height of N
+    fn f_0xD000(&mut self, opcode: u16) {
+        let x: u16 = self.v[((opcode & 0x0F00) >> 8) as usize].into();
+        let y: u16 = self.v[((opcode & 0x00F0) >> 4) as usize].into();
+        let height: u16 = opcode & 0x000F;
+
+        self.v[0xF] = 0;
+
+        for yline in 0..height {
+            let pixel = self.memory[(self.i + yline) as usize];
+            for xline in 0..8 {
+                if pixel & (0x80 >> xline) != 0 {
+                    let index = x + xline + ((y + yline) * (COL as u16));
+                    if self.graphics[index as usize] == 1 {
+                        self.v[0xF] = 1;
+                    }
+                    self.graphics[index as usize] ^= 1;
+                }
+            }
+        }
+        //@todo add draw flag here
+    }
+
+    //0xANNN sets self.i = NNN
+    fn f_0xA000(&mut self, opcode: u16) {
+        self.i = opcode & 0x0FFF;
+    }
+
+    // 0x7XNN add NN to v[X]
+    fn f_0x7000(&mut self, opcode: u16) {
+        let index: u16 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
+        let value: u8 = (opcode & 0x00FF).try_into().unwrap();
+        self.v[index as usize] += value;
+    }
+
+    // 0x6XNN set value v[X] = NN
+    fn f_0x6000(&mut self, opcode: u16) {
+        let index: u16 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
+        let value: u8 = (opcode & 0x00FF).try_into().unwrap();
+        self.v[index as usize] = value;
+    }
+
     fn f_0x0000(&mut self, opcode: u16) {
         match opcode & 0x000F {
             // 0x00E0: Clears the screen
@@ -88,34 +155,17 @@ impl Chip8 {
             0x000E => self.return_from_subroutine(),
             _ => eprintln!("Opcode '{:#X}' not found", opcode),
         }
-        println!("working: {}", opcode);
     }
 
     // 0x1NNN: Jumps to address NNN
     fn f_0x1000(&mut self, opcode: u16) {
         let address = opcode & 0x0FFF;
 
-        self.stack[self.sp as usize] = self.pc;
-        self.sp += 1;
+        println!("Jumping to address {:#X}", address);
+
+        //self.stack[self.sp as usize] = self.pc; //todo
+        //self.sp += 1;
         self.pc = address;
-    }
-
-    fn setup_map(&mut self) {
-        self.opcode_function.insert(0x0000, Chip8::f_0x0000);
-        self.opcode_function.insert(0x1000, Chip8::f_0x1000);
-    }
-
-    pub fn load_game(&mut self, filename: &str) -> Result<usize, Box<dyn Error>> {
-        let mut file = fs::File::open(filename)?;
-        let read_bytes = file.read(&mut self.memory[512..])?;
-        println!("Read {} bytes from file {}", read_bytes, filename);
-        Ok(read_bytes)
-    }
-
-    pub fn load_font(&mut self) {
-        for (i, &value) in FONTSET.iter().enumerate() {
-            self.memory[i] = value;
-        }
     }
 
     pub fn handle_opcode(&mut self, opcode: u16) {
@@ -128,10 +178,12 @@ impl Chip8 {
     }
 
     fn emulate_cycle(&mut self) {
-        let mut first: u16 = self.memory[self.pc as usize].into();
-        first = first << 8;
-        let second: u16 = (self.memory[self.pc as usize + 1]).into();
-        let opcode: u16 = first | second;
+        let left: u16 = self.memory[self.pc as usize].into();
+        let right: u16 = (self.memory[self.pc as usize + 1]).into();
+        let opcode: u16 = (left << 8) | right;
+        self.pc += 2;
+
+        println!("Got opcode: {:#X}", opcode);
 
         self.handle_opcode(opcode);
 
@@ -146,9 +198,26 @@ impl Chip8 {
     }
 
     pub fn run(&mut self) {
-        loop {
+        let mut app = simple::Window::new("Chip8", (COL * 10) as u16, (ROW * 10) as u16);
+
+        while app.next_frame() {
             self.emulate_cycle();
-            thread::sleep(Duration::from_secs(2));
+            for (i, &value) in self.graphics.iter().enumerate() {
+                if value == 0 {
+                    continue;
+                }
+                let x = i % COL;
+                let y = i / ROW;
+
+                let r = simple::Point::new(x as i32, y as i32);
+                app.set_color(255, 255, 255, 255);
+                app.draw_point(r);
+                //app.draw_rect(r);
+                //app.fill_rect(r);
+            }
+            thread::sleep(Duration::from_millis(1000 / 60));
+            //thread::sleep(Duration::from_secs(1));
+            //app.clear();
         }
     }
 }
@@ -188,6 +257,15 @@ mod tests {
     }
 
     #[test]
+    fn clear_screen2() {
+        let mut chip = create_chip();
+        chip.graphics.fill(1);
+        assert_eq!(chip.graphics, [1; ROW * COL]);
+        chip.handle_opcode(0xE0);
+        assert_eq!(chip.graphics, [0; ROW * COL]);
+    }
+
+    #[test]
     #[should_panic(expected = "Stack is empty")]
     fn return_from_subroutine_empty_stack() {
         let mut chip = create_chip();
@@ -216,10 +294,56 @@ mod tests {
     }
 
     #[test]
-    #[allow(non_snake_case)]
     fn jump_to_address_0x1NNN() {
         let mut chip = create_chip();
         chip.handle_opcode(0x1080);
         assert_eq!(chip.pc, 128);
     }
+
+    #[test]
+    fn set_value_0x6XNN() {
+        let mut chip = create_chip();
+
+        // set v[0] = 128
+        chip.handle_opcode(0x6080);
+        assert_eq!(chip.v[0], 128);
+
+        // set v[10] = 128
+        chip.handle_opcode(0x6a80);
+        assert_eq!(chip.v[10], 128);
+
+        println!("{:?}", chip.v);
+    }
+
+    #[test]
+    fn add_to_value_0x7XNN() {
+        let mut chip = create_chip();
+
+        // set v[10] = 8
+        chip.handle_opcode(0x6a08);
+        assert_eq!(chip.v[10], 8);
+
+        chip.handle_opcode(0x7a08);
+        assert_eq!(chip.v[10], 16);
+    }
+
+    #[test]
+    fn set_index_register_value_0xA000() {
+        let mut chip = create_chip();
+
+        chip.handle_opcode(0xA001);
+        assert_eq!(chip.i, 1);
+
+        chip.handle_opcode(0xA123);
+        assert_eq!(chip.i, 291);
+    }
 }
+
+/*
+    [x] 00E0 (clear screen)
+    [x] 1NNN (jump)
+    [x] 6XNN (set register VX)
+    [x] 7XNN (add value to register VX)
+    [x] ANNN (set index register I)
+    [x] DXYN (display/draw)
+*/
