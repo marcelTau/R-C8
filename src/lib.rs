@@ -71,6 +71,7 @@ impl Chip8 {
         self.opcode_function.insert(0x2000, Chip8::f_0x2000);
         self.opcode_function.insert(0x3000, Chip8::f_0x3000);
         self.opcode_function.insert(0x4000, Chip8::f_0x4000);
+        self.opcode_function.insert(0x5000, Chip8::f_0x5000);
         self.opcode_function.insert(0x6000, Chip8::f_0x6000);
         self.opcode_function.insert(0x7000, Chip8::f_0x7000);
         self.opcode_function.insert(0xA000, Chip8::f_0xA000);
@@ -157,6 +158,16 @@ impl Chip8 {
         let value = opcode & 0x00FF;
 
         if self.v[index as usize] != value as u8 {
+            self.pc += 2;
+        }
+    }
+
+    // 0x5XY0 skips the next instruction if v[X] == v[Y]
+    fn f_0x5000(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        let Y = (opcode & 0x00F0) >> 4;
+
+        if self.v[X as usize] == self.v[Y as usize] {
             self.pc += 2;
         }
     }
@@ -380,6 +391,20 @@ mod tests {
         assert_eq!(chip.pc, 0x200);
 
         chip.handle_opcode(0x4205);
+        assert_eq!(chip.pc, 0x202);
+    }
+
+    #[test]
+    fn skip_xy_0x5XY0() {
+        let mut chip = create_chip();
+        chip.v[1] = 10;
+        chip.v[4] = 11;
+
+        chip.handle_opcode(0x5140);
+        assert_eq!(chip.pc, 0x200);
+
+        chip.v[4] = 10;
+        chip.handle_opcode(0x5140);
         assert_eq!(chip.pc, 0x202);
     }
 
