@@ -397,6 +397,11 @@ impl Cpu {
     fn f_0xF000(&mut self, opcode: u16) {
         match opcode & 0x00FF {
             0x0A => todo!(),
+            0x07 => self.f_0xFX07(opcode),
+            0x15 => self.f_0xFX15(opcode),
+            0x18 => self.f_0xFX18(opcode),
+            0x1E => self.f_0xFX1E(opcode),
+            0x29 => self.f_0xFX29(opcode),
             _ => unreachable!(),
         }
     }
@@ -421,7 +426,33 @@ impl Cpu {
                 _ => (),
             }
         }
-        return None;
+        None
+    }
+
+    // 0xFX15 sets the delay timer to the value in v[X]
+    fn f_0xFX15(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        self.delay_timer = self.v[X as usize];
+    }
+
+    // 0xFX18 sets the sound timer to the value in v[X]
+    fn f_0xFX18(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        self.sound_timer = self.v[X as usize];
+    }
+
+    // 0xFX1E adds v[X] to self.i
+    fn f_0xFX1E(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        self.i += self.v[X as usize] as u16;
+    }
+
+    // 0xFX29 sets self.i to the location of the sprite of the character at v[X]
+    // Since the sprite sheet is located at the beginning of the memory and has a size of 4x5
+    // we can just set the value of v[X] * 5
+    fn f_0xFX29(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        self.i = (self.v[X as usize] * 5) as u16;
     }
 }
 
@@ -748,5 +779,45 @@ mod tests {
         chip.decode_and_execute(0xFA07);
 
         assert_eq!(chip.v[10], 10);
+    }
+
+    #[test]
+    fn set_delay_timer_to_vx_0xFX15() {
+        let mut chip = Cpu::new();
+
+        chip.v[3] = 21;
+
+        assert_eq!(chip.delay_timer, 0);
+        chip.decode_and_execute(0xF315);
+        assert_eq!(chip.delay_timer, 21);
+    }
+
+    #[test]
+    fn set_sound_timer_to_vx_0xFX18() {
+        let mut chip = Cpu::new();
+
+        chip.v[3] = 21;
+
+        assert_eq!(chip.sound_timer, 0);
+        chip.decode_and_execute(0xF318);
+        assert_eq!(chip.sound_timer, 21);
+    }
+
+    #[test]
+    fn add_vx_to_i_0xFX1E() {
+        let mut chip = Cpu::new();
+        assert_eq!(chip.i, 0);
+        chip.v[8] = 10;
+        chip.decode_and_execute(0xF81E);
+        assert_eq!(chip.i, 10);
+    }
+
+    #[test]
+    fn jump_to_sprite_pos_0xFX29() {
+        let mut chip = Cpu::new();
+        assert_eq!(chip.i, 0);
+        chip.v[2] = 2;
+        chip.decode_and_execute(0xF229);
+        assert_eq!(chip.i, 10);
     }
 }
