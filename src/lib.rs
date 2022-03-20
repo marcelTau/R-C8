@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 
+use rand::Rng;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
@@ -77,6 +78,8 @@ impl Chip8 {
         self.opcode_function.insert(0x8000, Chip8::f_0x8000);
         self.opcode_function.insert(0x9000, Chip8::f_0x9000);
         self.opcode_function.insert(0xA000, Chip8::f_0xA000);
+        self.opcode_function.insert(0xB000, Chip8::f_0xB000);
+        self.opcode_function.insert(0xC000, Chip8::f_0xC000);
         self.opcode_function.insert(0xD000, Chip8::f_0xD000);
     }
 
@@ -200,7 +203,7 @@ impl Chip8 {
             6 => self.f_0x8XY6(opcode),
             7 => self.f_0x8XY7(opcode),
             0xE => self.f_0x8XYE(opcode),
-            _ => (),
+            _ => unreachable!(),
         }
     }
 
@@ -313,6 +316,19 @@ impl Chip8 {
         self.i = opcode & 0x0FFF;
     }
 
+    // 0xBNNN jumps to address NNN + v[0]
+    fn f_0xB000(&mut self, opcode: u16) {
+        self.pc = (opcode & 0x0FFF) + self.v[0] as u16;
+    }
+
+    // 0xCXNN set v[X] to rand(1..255) & NN
+    fn f_0xC000(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        let NN = opcode & 0x00FF;
+        let r: u8 = rand::thread_rng().gen_range(1..=255);
+        self.v[X as usize] = r & NN as u8;
+    }
+
     // 0xDXYN: draw sprite at coordinate X,Y with height of N
     fn f_0xD000(&mut self, opcode: u16) {
         let x: u16 = self.v[((opcode & 0x0F00) >> 8) as usize].into();
@@ -334,6 +350,14 @@ impl Chip8 {
             }
         }
         self.should_redraw = true;
+    }
+
+    fn f_0xE000(&mut self, opcode: u16) {
+        match opcode & 0x00FF {
+            0x9E => todo!(),
+            0xA1 => todo!(),
+            _ => unreachable!(),
+        }
     }
 
     pub fn handle_opcode(&mut self, opcode: u16) {
@@ -707,7 +731,7 @@ mod tests {
     }
 
     #[test]
-    fn skip_if_xy_not_equal() {
+    fn skip_if_xy_not_equal_0x9000() {
         let mut chip = create_chip();
 
         chip.v[2] = 5;
@@ -730,5 +754,14 @@ mod tests {
 
         chip.handle_opcode(0xA123);
         assert_eq!(chip.i, 291);
+    }
+
+    #[test]
+    fn jump_to_nnn_plus_v0_0xB000() {
+        let mut chip = create_chip();
+        assert_eq!(chip.pc, 0x200);
+        chip.v[0] = 0x80;
+        chip.handle_opcode(0xB080);
+        assert_eq!(chip.pc, 0x80 + 0x80);
     }
 }
