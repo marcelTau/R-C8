@@ -196,6 +196,7 @@ impl Chip8 {
             3 => self.f_0x8XY3(opcode),
             4 => self.f_0x8XY4(opcode),
             5 => self.f_0x8XY5(opcode),
+            6 => self.f_0x8XY6(opcode),
             _ => (),
         }
     }
@@ -260,6 +261,15 @@ impl Chip8 {
             self.v[0xF] = 0x0;
         }
         self.v[X as usize] = self.v[X as usize].wrapping_add(self.v[Y as usize].wrapping_neg());
+    }
+
+    // 0x8XY6 stores the least significant bit of v[X] in v[0xF] then shifts v[X] to the right by 1
+    fn f_0x8XY6(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        let Y = (opcode & 0x00F0) >> 4;
+        // store least significant bit of v[X] in v[0xF]
+        self.v[0xF] = self.v[X as usize] & 0x1;
+        self.v[X as usize] = self.v[Y as usize] >> 1;
     }
 
     //0xANNN sets self.i = NNN
@@ -601,6 +611,23 @@ mod tests {
         chip.handle_opcode(0x8235);
 
         assert_eq!(chip.v[2], 251);
+        assert_eq!(chip.v[0xF], 0x0);
+    }
+
+    #[test]
+    fn right_shifting_0x8XY6() {
+        let mut chip = create_chip();
+
+        chip.v[2] = 3;
+        chip.v[3] = 5;
+        chip.handle_opcode(0x8326);
+        assert_eq!(chip.v[3], 0x1);
+        assert_eq!(chip.v[0xF], 0x1);
+
+        chip.v[2] = 3;
+        chip.v[3] = 4;
+        chip.handle_opcode(0x8326);
+        assert_eq!(chip.v[3], 0x1);
         assert_eq!(chip.v[0xF], 0x0);
     }
 
