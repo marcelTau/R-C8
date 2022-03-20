@@ -41,6 +41,7 @@ pub struct Chip8 {
     delay_timer: u8,
     sound_timer: u8,
     opcode_function: HashMap<u16, F>,
+    should_redraw: bool,
 }
 
 type F = fn(&mut Chip8, u16);
@@ -61,11 +62,13 @@ impl Chip8 {
             delay_timer: 0,
             sound_timer: 0,
             opcode_function: m,
+            should_redraw: false,
         }
     }
     pub fn setup_map(&mut self) {
         self.opcode_function.insert(0x0000, Chip8::f_0x0000);
         self.opcode_function.insert(0x1000, Chip8::f_0x1000);
+        self.opcode_function.insert(0x2000, Chip8::f_0x2000);
         self.opcode_function.insert(0x6000, Chip8::f_0x6000);
         self.opcode_function.insert(0x7000, Chip8::f_0x7000);
         self.opcode_function.insert(0xA000, Chip8::f_0xA000);
@@ -104,48 +107,6 @@ impl Chip8 {
         self.stack[self.sp as usize] = 0;
     }
 
-    // 0xDXYN: draw sprite at coordinate X,Y with height of N
-    fn f_0xD000(&mut self, opcode: u16) {
-        let x: u16 = self.v[((opcode & 0x0F00) >> 8) as usize].into();
-        let y: u16 = self.v[((opcode & 0x00F0) >> 4) as usize].into();
-        let height: u16 = opcode & 0x000F;
-
-        self.v[0xF] = 0;
-
-        for yline in 0..height {
-            let pixel = self.memory[(self.i + yline) as usize];
-            for xline in 0..8 {
-                if pixel & (0x80 >> xline) != 0 {
-                    let index = x + xline + ((y + yline) * (COL as u16));
-                    if self.graphics[index as usize] == 1 {
-                        self.v[0xF] = 1;
-                    }
-                    self.graphics[index as usize] ^= 1;
-                }
-            }
-        }
-        //@todo add draw flag here
-    }
-
-    //0xANNN sets self.i = NNN
-    fn f_0xA000(&mut self, opcode: u16) {
-        self.i = opcode & 0x0FFF;
-    }
-
-    // 0x7XNN add NN to v[X]
-    fn f_0x7000(&mut self, opcode: u16) {
-        let index: u16 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
-        let value: u8 = (opcode & 0x00FF).try_into().unwrap();
-        self.v[index as usize] += value;
-    }
-
-    // 0x6XNN set value v[X] = NN
-    fn f_0x6000(&mut self, opcode: u16) {
-        let index: u16 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
-        let value: u8 = (opcode & 0x00FF).try_into().unwrap();
-        self.v[index as usize] = value;
-    }
-
     fn f_0x0000(&mut self, opcode: u16) {
         match opcode & 0x000F {
             // 0x00E0: Clears the screen
@@ -168,6 +129,58 @@ impl Chip8 {
         self.pc = address;
     }
 
+    // 0x2NNN Calls subroutine at NNN and saves the current address on the stack
+    fn f_0x2000(&mut self, opcode: u16) {
+        let address = opcode & 0x0FFF;
+
+        self.stack[self.sp as usize] = self.pc;
+        self.sp += 1;
+
+        self.pc = address;
+    }
+
+    // 0x6XNN set value v[X] = NN
+    fn f_0x6000(&mut self, opcode: u16) {
+        let index: u16 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
+        let value: u8 = (opcode & 0x00FF).try_into().unwrap();
+        self.v[index as usize] = value;
+    }
+
+    // 0x7XNN add NN to v[X]
+    fn f_0x7000(&mut self, opcode: u16) {
+        let index: u16 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
+        let value: u8 = (opcode & 0x00FF).try_into().unwrap();
+        self.v[index as usize] += value;
+    }
+
+    //0xANNN sets self.i = NNN
+    fn f_0xA000(&mut self, opcode: u16) {
+        self.i = opcode & 0x0FFF;
+    }
+
+    // 0xDXYN: draw sprite at coordinate X,Y with height of N
+    fn f_0xD000(&mut self, opcode: u16) {
+        let x: u16 = self.v[((opcode & 0x0F00) >> 8) as usize].into();
+        let y: u16 = self.v[((opcode & 0x00F0) >> 4) as usize].into();
+        let height: u16 = opcode & 0x000F;
+
+        self.v[0xF] = 0;
+
+        for yline in 0..height {
+            let pixel = self.memory[(self.i + yline) as usize];
+            for xline in 0..8 {
+                if pixel & (0x80 >> xline) != 0 {
+                    let index = x + xline + ((y + yline) * (COL as u16));
+                    if self.graphics[index as usize] == 1 {
+                        self.v[0xF] = 1;
+                    }
+                    self.graphics[index as usize] ^= 1;
+                }
+            }
+        }
+        self.should_redraw = true;
+    }
+
     pub fn handle_opcode(&mut self, opcode: u16) {
         match self.opcode_function.get(&(opcode & 0xF000)) {
             Some(func) => func(self, opcode),
@@ -177,13 +190,17 @@ impl Chip8 {
         }
     }
 
-    fn emulate_cycle(&mut self) {
+    fn fetch_opcode(&mut self) -> u16 {
         let left: u16 = self.memory[self.pc as usize].into();
         let right: u16 = (self.memory[self.pc as usize + 1]).into();
         let opcode: u16 = (left << 8) | right;
         self.pc += 2;
 
-        println!("Got opcode: {:#X}", opcode);
+        opcode
+    }
+
+    fn emulate_cycle(&mut self) {
+        let opcode = self.fetch_opcode();
 
         self.handle_opcode(opcode);
 
@@ -197,27 +214,33 @@ impl Chip8 {
         }
     }
 
+    fn redraw(&mut self, app: &mut simple::Window) {
+        if self.should_redraw == false {
+            return;
+        }
+
+        for (i, &value) in self.graphics.iter().enumerate() {
+            if value == 0 {
+                continue;
+            }
+            let x = i % COL;
+            let y = i / ROW;
+
+            let r = simple::Point::new(x as i32, y as i32);
+            app.draw_point(r);
+            app.set_color(255, 255, 255, 255);
+        }
+
+        self.should_redraw = false;
+    }
+
     pub fn run(&mut self) {
         let mut app = simple::Window::new("Chip8", (COL * 10) as u16, (ROW * 10) as u16);
 
         while app.next_frame() {
             self.emulate_cycle();
-            for (i, &value) in self.graphics.iter().enumerate() {
-                if value == 0 {
-                    continue;
-                }
-                let x = i % COL;
-                let y = i / ROW;
-
-                let r = simple::Point::new(x as i32, y as i32);
-                app.set_color(255, 255, 255, 255);
-                app.draw_point(r);
-                //app.draw_rect(r);
-                //app.fill_rect(r);
-            }
+            self.redraw(&mut app);
             thread::sleep(Duration::from_millis(1000 / 60));
-            //thread::sleep(Duration::from_secs(1));
-            //app.clear();
         }
     }
 }
@@ -275,22 +298,20 @@ mod tests {
     #[test]
     fn return_from_subroutine() {
         let mut chip = create_chip();
+        // call subroutine at address 0x80 and put current address of 0x200 on the stack
+        chip.handle_opcode(0x2080);
+        assert_eq!(chip.pc, 0x80);
 
-        // jump to 128
-        chip.handle_opcode(0x1080);
-        assert_eq!(chip.pc, 128);
+        println!("{:?}", chip.stack);
+        // call subroutine at address 0x83 and put current address of 0x80 on the stack
+        chip.handle_opcode(0x2083);
+        assert_eq!(chip.pc, 0x83);
+        println!("{:?}", chip.stack);
 
-        // jump to 131
-        chip.handle_opcode(0x1083);
-        assert_eq!(chip.pc, 131);
-
-        // jump to 132
-        chip.handle_opcode(0x1084);
-        assert_eq!(chip.pc, 132);
-
-        // jump back to 128
+        // return from subroutine at address 0x83 and go back to 0x80
         chip.handle_opcode(0x00EE);
-        assert_eq!(chip.pc, 131);
+        assert_eq!(chip.pc, 0x80);
+        println!("{:?}", chip.stack);
     }
 
     #[test]
@@ -298,6 +319,21 @@ mod tests {
         let mut chip = create_chip();
         chip.handle_opcode(0x1080);
         assert_eq!(chip.pc, 128);
+    }
+
+    #[test]
+    fn call_subroutine_0x2NNN() {
+        let mut chip = create_chip();
+
+        // call subroutine at address 128, and put current 512 on the stack
+        chip.handle_opcode(0x2080);
+        assert_eq!(chip.pc, 128);
+
+        // call subroutine at address 5, and put current address 128 on the stack
+        chip.handle_opcode(0x2005);
+        assert_eq!(chip.pc, 5);
+
+        assert_eq!(chip.stack[chip.sp as usize - 1], 128);
     }
 
     #[test]
