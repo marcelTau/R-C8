@@ -197,6 +197,8 @@ impl Chip8 {
             4 => self.f_0x8XY4(opcode),
             5 => self.f_0x8XY5(opcode),
             6 => self.f_0x8XY6(opcode),
+            7 => self.f_0x8XY7(opcode),
+            0xE => self.f_0x8XYE(opcode),
             _ => (),
         }
     }
@@ -270,6 +272,29 @@ impl Chip8 {
         // store least significant bit of v[X] in v[0xF]
         self.v[0xF] = self.v[X as usize] & 0x1;
         self.v[X as usize] = self.v[Y as usize] >> 1;
+    }
+
+    // 0x8XY7 sets v[X] = v[Y] - v[X], and set v[0xF] to 0 if there is a borrow if not then 1
+    fn f_0x8XY7(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        let Y = (opcode & 0x00F0) >> 4;
+
+        if self.v[X as usize] > self.v[Y as usize] {
+            self.v[0xF] = 0x0;
+        } else {
+            self.v[0xF] = 0x1;
+        }
+        self.v[X as usize] = self.v[Y as usize].wrapping_add(self.v[X as usize].wrapping_neg());
+    }
+
+    // 0x8XYE stores the MOST significant bit of v[Y] in v[0xF]
+    // then sets v[X] to v[Y] <<= 1
+    fn f_0x8XYE(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        let Y = (opcode & 0x00F0) >> 4;
+
+        self.v[0xF] = (self.v[Y as usize] & 0b10000000) >> 7;
+        self.v[X as usize] = self.v[Y as usize].wrapping_shl(1);
     }
 
     //0xANNN sets self.i = NNN
@@ -629,6 +654,45 @@ mod tests {
         chip.handle_opcode(0x8326);
         assert_eq!(chip.v[3], 0x1);
         assert_eq!(chip.v[0xF], 0x0);
+    }
+
+    #[test]
+    fn subtracting_y_x_simple_0x8XY7() {
+        let mut chip = create_chip();
+
+        chip.v[2] = 3;
+        chip.v[3] = 1;
+
+        chip.handle_opcode(0x8327);
+
+        assert_eq!(chip.v[3], 2);
+        assert_eq!(chip.v[0xF], 1);
+    }
+
+    #[test]
+    fn subtracting_y_x_with_borrow_0x8XY7() {
+        let mut chip = create_chip();
+
+        chip.v[2] = 3;
+        chip.v[3] = 10;
+
+        chip.handle_opcode(0x8327);
+
+        assert_eq!(chip.v[3], 249);
+        assert_eq!(chip.v[0xF], 0);
+    }
+
+    #[test]
+    fn left_shifting_0x8XYE() {
+        let mut chip = create_chip();
+
+        chip.v[3] = 4; //X
+        chip.v[2] = 128; //Y
+
+        chip.handle_opcode(0x832E);
+
+        assert_eq!(chip.v[0xF], 0x1);
+        assert_eq!(chip.v[3], 0x0);
     }
 
     #[test]
