@@ -81,6 +81,8 @@ impl Chip8 {
         self.opcode_function.insert(0xB000, Chip8::f_0xB000);
         self.opcode_function.insert(0xC000, Chip8::f_0xC000);
         self.opcode_function.insert(0xD000, Chip8::f_0xD000);
+        self.opcode_function.insert(0xE000, Chip8::f_0xE000);
+        self.opcode_function.insert(0xF000, Chip8::f_0xF000);
     }
 
     pub fn load_game(&mut self, filename: &str) -> Result<usize, Box<dyn Error>> {
@@ -132,8 +134,6 @@ impl Chip8 {
 
         println!("Jumping to address {:#X}", address);
 
-        //self.stack[self.sp as usize] = self.pc; //todo
-        //self.sp += 1;
         self.pc = address;
     }
 
@@ -354,10 +354,38 @@ impl Chip8 {
 
     fn f_0xE000(&mut self, opcode: u16) {
         match opcode & 0x00FF {
-            0x9E => todo!(),
-            0xA1 => todo!(),
+            0x9E => {
+                // if key is pressed
+                if self.keypad[((opcode & 0x0F00) >> 8) as usize] != 0 {
+                    self.pc += 2;
+                }
+            }
+            0xA1 => {
+                // if key is not pressed
+                if self.keypad[((opcode & 0x0F00) >> 8) as usize] == 0 {
+                    self.pc += 2;
+                }
+            }
             _ => unreachable!(),
         }
+    }
+
+    fn f_0xF000(&mut self, opcode: u16) {
+        match opcode & 0x00FF {
+            0x07 => self.f_0xFX07(opcode),
+            0x0A => todo!(),
+            _ => unreachable!(),
+        }
+    }
+
+    // 0xFX07 sets v[X] to value of delay timer
+    fn f_0xFX07(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        self.v[X as usize] = self.delay_timer;
+    }
+
+    fn f_0xFX0A(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
     }
 
     pub fn handle_opcode(&mut self, opcode: u16) {
@@ -763,5 +791,39 @@ mod tests {
         chip.v[0] = 0x80;
         chip.handle_opcode(0xB080);
         assert_eq!(chip.pc, 0x80 + 0x80);
+    }
+
+    #[test]
+    fn is_key_pressed_0xE000() {
+        let mut chip = create_chip();
+        assert_eq!(chip.pc, 0x200);
+
+        chip.keypad[3] = 1;
+        chip.handle_opcode(0xE39E);
+        assert_eq!(chip.pc, 0x202);
+    }
+
+    #[test]
+    fn is_key_not_pressed_0xE000() {
+        let mut chip = create_chip();
+        assert_eq!(chip.pc, 0x200);
+
+        chip.keypad[3] = 1;
+        chip.handle_opcode(0xE3A1);
+        assert_eq!(chip.pc, 0x200);
+
+        chip.keypad[3] = 0;
+        chip.handle_opcode(0xE3A1);
+        assert_eq!(chip.pc, 0x202);
+    }
+
+    #[test]
+    fn set_delay_timer_0xFX07() {
+        let mut chip = create_chip();
+        chip.delay_timer = 10;
+
+        chip.handle_opcode(0xFA07);
+
+        assert_eq!(chip.v[10], 10);
     }
 }
