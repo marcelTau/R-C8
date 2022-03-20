@@ -69,6 +69,8 @@ impl Chip8 {
         self.opcode_function.insert(0x0000, Chip8::f_0x0000);
         self.opcode_function.insert(0x1000, Chip8::f_0x1000);
         self.opcode_function.insert(0x2000, Chip8::f_0x2000);
+        self.opcode_function.insert(0x3000, Chip8::f_0x3000);
+        self.opcode_function.insert(0x4000, Chip8::f_0x4000);
         self.opcode_function.insert(0x6000, Chip8::f_0x6000);
         self.opcode_function.insert(0x7000, Chip8::f_0x7000);
         self.opcode_function.insert(0xA000, Chip8::f_0xA000);
@@ -137,6 +139,26 @@ impl Chip8 {
         self.sp += 1;
 
         self.pc = address;
+    }
+
+    // 0x3XNN skips the next instruction if v[X] == NN
+    fn f_0x3000(&mut self, opcode: u16) {
+        let index = (opcode & 0x0F00) >> 8;
+        let value = opcode & 0x00FF;
+
+        if self.v[index as usize] == value as u8 {
+            self.pc += 2;
+        }
+    }
+
+    // 0x4XNN skips the next instruction if v[X] != NN
+    fn f_0x4000(&mut self, opcode: u16) {
+        let index = (opcode & 0x0F00) >> 8;
+        let value = opcode & 0x00FF;
+
+        if self.v[index as usize] != value as u8 {
+            self.pc += 2;
+        }
     }
 
     // 0x6XNN set value v[X] = NN
@@ -334,6 +356,31 @@ mod tests {
         assert_eq!(chip.pc, 5);
 
         assert_eq!(chip.stack[chip.sp as usize - 1], 128);
+    }
+
+    #[test]
+    fn skip_if_equal_0x3XNN() {
+        let mut chip = create_chip();
+        assert_eq!(chip.pc, 0x200);
+        chip.v[2] = 4;
+
+        chip.handle_opcode(0x3205);
+        assert_eq!(chip.pc, 0x200);
+        chip.handle_opcode(0x3204);
+
+        assert_eq!(chip.pc, 0x202);
+    }
+
+    #[test]
+    fn skip_if_not_equal_0x4XNN() {
+        let mut chip = create_chip();
+        assert_eq!(chip.pc, 0x200);
+        chip.v[2] = 4;
+        chip.handle_opcode(0x4204);
+        assert_eq!(chip.pc, 0x200);
+
+        chip.handle_opcode(0x4205);
+        assert_eq!(chip.pc, 0x202);
     }
 
     #[test]
