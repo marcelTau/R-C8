@@ -1,95 +1,61 @@
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 
+use crate::chip8::{COL, FONTSET, ROW};
+use crate::graphics::Graphics;
 use rand::Rng;
 use std::collections::HashMap;
-use std::error::Error;
-use std::fs;
-use std::io::Read;
-use std::thread;
-use std::time::Duration;
 
-const COL: usize = 64;
-const ROW: usize = 32;
-const FONTSET: [u8; 80] = [
-    0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
-    0x20, 0x60, 0x20, 0x20, 0x70, // 1
-    0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
-    0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
-    0x90, 0x90, 0xF0, 0x10, 0x10, // 4
-    0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
-    0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
-    0xF0, 0x10, 0x20, 0x40, 0x40, // 7
-    0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
-    0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
-    0xF0, 0x90, 0xF0, 0x90, 0x90, // A
-    0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
-    0xF0, 0x80, 0x80, 0x80, 0xF0, // C
-    0xE0, 0x90, 0x90, 0x90, 0xE0, // D
-    0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
-    0xF0, 0x80, 0xF0, 0x80, 0x80, // F
-];
-
-pub struct Chip8 {
+pub struct Cpu {
+    pub graphics: [u8; ROW * COL],
+    pub memory: [u8; 4096],
+    pub should_redraw: bool,
     stack: [u16; 16],
     sp: u16,
-    keypad: [u8; 16],
-    memory: [u8; 4096],
     v: [u8; 16],
-    graphics: [u8; ROW * COL],
     i: u16,
     pc: u16,
+    keypad: [u8; 16],
     delay_timer: u8,
     sound_timer: u8,
-    opcode_function: HashMap<u16, F>,
-    should_redraw: bool,
+    opcode_function: HashMap<u16, OpcodeFunction>,
 }
+type OpcodeFunction = fn(&mut Cpu, u16);
 
-type F = fn(&mut Chip8, u16);
+impl Cpu {
+    pub fn new() -> Cpu {
+        let mut map: HashMap<u16, OpcodeFunction> = HashMap::new();
+        map.insert(0x0000, Cpu::f_0x0000);
+        map.insert(0x1000, Cpu::f_0x1000);
+        map.insert(0x2000, Cpu::f_0x2000);
+        map.insert(0x3000, Cpu::f_0x3000);
+        map.insert(0x4000, Cpu::f_0x4000);
+        map.insert(0x5000, Cpu::f_0x5000);
+        map.insert(0x6000, Cpu::f_0x6000);
+        map.insert(0x7000, Cpu::f_0x7000);
+        map.insert(0x8000, Cpu::f_0x8000);
+        map.insert(0x9000, Cpu::f_0x9000);
+        map.insert(0xA000, Cpu::f_0xA000);
+        map.insert(0xB000, Cpu::f_0xB000);
+        map.insert(0xC000, Cpu::f_0xC000);
+        map.insert(0xD000, Cpu::f_0xD000);
+        map.insert(0xE000, Cpu::f_0xE000);
+        map.insert(0xF000, Cpu::f_0xF000);
 
-// initialization
-impl Chip8 {
-    pub fn new() -> Self {
-        let m = HashMap::<u16, F>::new();
-        Chip8 {
+        Cpu {
+            memory: [0; 4096],
             stack: [0; 16],
             sp: 0,
-            keypad: [0; 16],
-            memory: [0; 4096],
+            i: 0,
+            pc: 0x200,
             v: [0; 16],
             graphics: [0; ROW * COL],
-            i: 0,
-            pc: 0x200, //
+            keypad: [0; 16],
             delay_timer: 0,
             sound_timer: 0,
-            opcode_function: m,
+            opcode_function: map,
             should_redraw: false,
         }
-    }
-    pub fn setup_map(&mut self) {
-        self.opcode_function.insert(0x0000, Chip8::f_0x0000);
-        self.opcode_function.insert(0x1000, Chip8::f_0x1000);
-        self.opcode_function.insert(0x2000, Chip8::f_0x2000);
-        self.opcode_function.insert(0x3000, Chip8::f_0x3000);
-        self.opcode_function.insert(0x4000, Chip8::f_0x4000);
-        self.opcode_function.insert(0x5000, Chip8::f_0x5000);
-        self.opcode_function.insert(0x6000, Chip8::f_0x6000);
-        self.opcode_function.insert(0x7000, Chip8::f_0x7000);
-        self.opcode_function.insert(0x8000, Chip8::f_0x8000);
-        self.opcode_function.insert(0x9000, Chip8::f_0x9000);
-        self.opcode_function.insert(0xA000, Chip8::f_0xA000);
-        self.opcode_function.insert(0xB000, Chip8::f_0xB000);
-        self.opcode_function.insert(0xC000, Chip8::f_0xC000);
-        self.opcode_function.insert(0xD000, Chip8::f_0xD000);
-        self.opcode_function.insert(0xE000, Chip8::f_0xE000);
-        self.opcode_function.insert(0xF000, Chip8::f_0xF000);
-    }
-
-    pub fn load_game(&mut self, filename: &str) -> Result<usize, Box<dyn Error>> {
-        let mut file = fs::File::open(filename)?;
-        let read_bytes = file.read(&mut self.memory[512..])?;
-        println!("Read {} bytes from file {}", read_bytes, filename);
-        Ok(read_bytes)
     }
 
     pub fn load_font(&mut self) {
@@ -99,7 +65,56 @@ impl Chip8 {
     }
 }
 
-impl Chip8 {
+impl Cpu {
+    pub fn fetch_opcode(&mut self) -> u16 {
+        let left: u16 = self.memory[self.pc as usize].into();
+        let right: u16 = (self.memory[self.pc as usize + 1]).into();
+        let opcode: u16 = (left << 8) | right;
+        self.pc += 2;
+        opcode
+    }
+
+    pub fn update_timers(&mut self) {
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
+
+        if self.sound_timer > 0 {
+            self.sound_timer -= 1;
+            println!("some sound ...");
+        }
+    }
+}
+
+impl Cpu {
+    pub fn decode_and_execute_graphic(&mut self, opcode: u16, graphics: Option<&mut Graphics>) {
+        if opcode & 0xF000 == 0xF000 && opcode & 0x00FF == 0x0A {
+            self.f_0xFX0A(opcode, &mut graphics.unwrap());
+        }
+        match self.opcode_function.get(&(opcode & 0xF000)) {
+            Some(func) => func(self, opcode),
+            None => {
+                eprintln!("Opcode '{:#X}' not found", opcode);
+            }
+        }
+    }
+    pub fn decode_and_execute(&mut self, opcode: u16) {
+        self.decode_and_execute_graphic(opcode, None);
+    }
+}
+
+impl Cpu {
+    pub fn f_0x0000(&mut self, opcode: u16) {
+        match opcode & 0x000F {
+            // 0x00E0: Clears the screen
+            0x0000 => self.clear_screen(),
+
+            // 0x00EE: Returns from subroutine
+            0x000E => self.return_from_subroutine(),
+            _ => eprintln!("Opcode '{:#X}' not found", opcode),
+        }
+    }
+
     fn clear_screen(&mut self) {
         self.graphics.fill(0);
     }
@@ -115,17 +130,6 @@ impl Chip8 {
 
         self.pc = self.stack[self.sp as usize];
         self.stack[self.sp as usize] = 0;
-    }
-
-    fn f_0x0000(&mut self, opcode: u16) {
-        match opcode & 0x000F {
-            // 0x00E0: Clears the screen
-            0x0000 => self.clear_screen(),
-
-            // 0x00EE: Returns from subroutine
-            0x000E => self.return_from_subroutine(),
-            _ => eprintln!("Opcode '{:#X}' not found", opcode),
-        }
     }
 
     // 0x1NNN: Jumps to address NNN
@@ -384,160 +388,49 @@ impl Chip8 {
         self.v[X as usize] = self.delay_timer;
     }
 
-    fn f_0xFX0A(&mut self, opcode: u16) {
+    fn f_0xFX0A(&mut self, opcode: u16, graphics: &mut Graphics) {
         let X = (opcode & 0x0F00) >> 8;
-    }
-
-    pub fn handle_opcode(&mut self, opcode: u16) {
-        match self.opcode_function.get(&(opcode & 0xF000)) {
-            Some(func) => func(self, opcode),
-            None => {
-                eprintln!("Opcode '{:#X}' not found", opcode);
-            }
-        }
-    }
-
-    fn fetch_opcode(&mut self) -> u16 {
-        let left: u16 = self.memory[self.pc as usize].into();
-        let right: u16 = (self.memory[self.pc as usize + 1]).into();
-        let opcode: u16 = (left << 8) | right;
-        self.pc += 2;
-
-        opcode
-    }
-
-    fn emulate_cycle(&mut self) {
-        let opcode = self.fetch_opcode();
-
-        self.handle_opcode(opcode);
-
-        if self.delay_timer > 0 {
-            self.delay_timer -= 1;
-        }
-
-        if self.sound_timer > 0 {
-            self.sound_timer -= 1;
-            println!("some sound ...");
-        }
-    }
-
-    fn redraw(&mut self, app: &mut simple::Window) {
-        if self.should_redraw == false {
-            return;
-        }
-
-        for (i, &value) in self.graphics.iter().enumerate() {
-            if value == 0 {
-                continue;
-            }
-            let x = i % COL;
-            let y = i / ROW;
-
-            let r = simple::Point::new(x as i32, y as i32);
-            app.draw_point(r);
-            app.set_color(255, 255, 255, 255);
-        }
-
-        self.should_redraw = false;
-    }
-
-    pub fn run(&mut self) {
-        let mut app = simple::Window::new("Chip8", (COL * 10) as u16, (ROW * 10) as u16);
-
-        while app.next_frame() {
-            self.emulate_cycle();
-            self.redraw(&mut app);
-            thread::sleep(Duration::from_millis(1000 / 60));
-        }
+        graphics.app.clear();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn create_chip() -> Chip8 {
-        let mut chip = Chip8::new();
-        chip.setup_map();
-        chip.load_font();
-        chip.load_game("pong.rom").unwrap();
-        chip
-    }
-
-    #[test]
-    fn load_game() {
-        let mut chip = Chip8::new();
-        let ret = chip.load_game("pong.rom").unwrap();
-        assert_eq!(ret, 246);
-    }
-
-    #[test]
-    fn load_font() {
-        let mut chip = Chip8::new();
-        chip.load_font();
-        assert_eq!(chip.memory[..80], FONTSET);
-    }
-
     #[test]
     fn clear_screen() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         chip.graphics.fill(1);
-        chip.handle_opcode(0x00E0);
+        chip.decode_and_execute(0x00E0);
         assert_eq!(chip.graphics, [0; ROW * COL]);
     }
 
     #[test]
     fn clear_screen2() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         chip.graphics.fill(1);
         assert_eq!(chip.graphics, [1; ROW * COL]);
-        chip.handle_opcode(0xE0);
+        chip.decode_and_execute(0xE0);
         assert_eq!(chip.graphics, [0; ROW * COL]);
     }
 
     #[test]
-    #[should_panic(expected = "Stack is empty")]
-    fn return_from_subroutine_empty_stack() {
-        let mut chip = create_chip();
-        chip.return_from_subroutine();
-    }
-
-    #[test]
-    fn return_from_subroutine() {
-        let mut chip = create_chip();
-        // call subroutine at address 0x80 and put current address of 0x200 on the stack
-        chip.handle_opcode(0x2080);
-        assert_eq!(chip.pc, 0x80);
-
-        println!("{:?}", chip.stack);
-        // call subroutine at address 0x83 and put current address of 0x80 on the stack
-        chip.handle_opcode(0x2083);
-        assert_eq!(chip.pc, 0x83);
-        println!("{:?}", chip.stack);
-
-        // return from subroutine at address 0x83 and go back to 0x80
-        chip.handle_opcode(0x00EE);
-        assert_eq!(chip.pc, 0x80);
-        println!("{:?}", chip.stack);
-    }
-
-    #[test]
     fn jump_to_address_0x1NNN() {
-        let mut chip = create_chip();
-        chip.handle_opcode(0x1080);
+        let mut chip = Cpu::new();
+        chip.decode_and_execute(0x1080);
         assert_eq!(chip.pc, 128);
     }
 
     #[test]
     fn call_subroutine_0x2NNN() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         // call subroutine at address 128, and put current 512 on the stack
-        chip.handle_opcode(0x2080);
+        chip.decode_and_execute(0x2080);
         assert_eq!(chip.pc, 128);
 
         // call subroutine at address 5, and put current address 128 on the stack
-        chip.handle_opcode(0x2005);
+        chip.decode_and_execute(0x2005);
         assert_eq!(chip.pc, 5);
 
         assert_eq!(chip.stack[chip.sp as usize - 1], 128);
@@ -545,53 +438,52 @@ mod tests {
 
     #[test]
     fn skip_if_equal_0x3XNN() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         assert_eq!(chip.pc, 0x200);
         chip.v[2] = 4;
 
-        chip.handle_opcode(0x3205);
+        chip.decode_and_execute(0x3205);
         assert_eq!(chip.pc, 0x200);
-        chip.handle_opcode(0x3204);
+        chip.decode_and_execute(0x3204);
 
         assert_eq!(chip.pc, 0x202);
     }
-
     #[test]
     fn skip_if_not_equal_0x4XNN() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         assert_eq!(chip.pc, 0x200);
         chip.v[2] = 4;
-        chip.handle_opcode(0x4204);
+        chip.decode_and_execute(0x4204);
         assert_eq!(chip.pc, 0x200);
 
-        chip.handle_opcode(0x4205);
+        chip.decode_and_execute(0x4205);
         assert_eq!(chip.pc, 0x202);
     }
 
     #[test]
     fn skip_xy_0x5XY0() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         chip.v[1] = 10;
         chip.v[4] = 11;
 
-        chip.handle_opcode(0x5140);
+        chip.decode_and_execute(0x5140);
         assert_eq!(chip.pc, 0x200);
 
         chip.v[4] = 10;
-        chip.handle_opcode(0x5140);
+        chip.decode_and_execute(0x5140);
         assert_eq!(chip.pc, 0x202);
     }
 
     #[test]
     fn set_value_0x6XNN() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         // set v[0] = 128
-        chip.handle_opcode(0x6080);
+        chip.decode_and_execute(0x6080);
         assert_eq!(chip.v[0], 128);
 
         // set v[10] = 128
-        chip.handle_opcode(0x6a80);
+        chip.decode_and_execute(0x6a80);
         assert_eq!(chip.v[10], 128);
 
         println!("{:?}", chip.v);
@@ -599,65 +491,65 @@ mod tests {
 
     #[test]
     fn add_to_value_0x7XNN() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         // set v[10] = 8
-        chip.handle_opcode(0x6a08);
+        chip.decode_and_execute(0x6a08);
         assert_eq!(chip.v[10], 8);
 
-        chip.handle_opcode(0x7a08);
+        chip.decode_and_execute(0x7a08);
         assert_eq!(chip.v[10], 16);
     }
 
     #[test]
     fn assign_value_0x8XY0() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         chip.v[3] = 4;
-        chip.handle_opcode(0x8430);
+        chip.decode_and_execute(0x8430);
         assert_eq!(chip.v[4], 4);
     }
 
     #[test]
     fn or_value_0x8XY1() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         chip.v[8] = 10;
         chip.v[11] = 172;
 
-        chip.handle_opcode(0x88b1);
+        chip.decode_and_execute(0x88b1);
 
         assert_eq!(chip.v[8], 10 | 172);
     }
 
     #[test]
     fn and_value_0x8XY2() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         chip.v[8] = 10;
         chip.v[11] = 172;
 
-        chip.handle_opcode(0x88b2);
+        chip.decode_and_execute(0x88b2);
 
         assert_eq!(chip.v[8], 10 & 172);
     }
 
     #[test]
     fn xor_value_0x8XY3() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         chip.v[8] = 10;
         chip.v[11] = 172;
 
-        chip.handle_opcode(0x88b3);
+        chip.decode_and_execute(0x88b3);
 
         assert_eq!(chip.v[8], 10 ^ 172);
     }
 
     #[test]
     fn adding_registers_simple_0x8XY4() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         chip.v[2] = 5;
         chip.v[3] = 10;
 
-        chip.handle_opcode(0x8234);
+        chip.decode_and_execute(0x8234);
 
         assert_eq!(chip.v[2], 15);
         assert_eq!(chip.v[0xF], 0x0);
@@ -665,12 +557,12 @@ mod tests {
 
     #[test]
     fn adding_registers_with_carry_0x8XY4() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         chip.v[2] = 255;
         chip.v[3] = 1;
 
-        chip.handle_opcode(0x8234);
+        chip.decode_and_execute(0x8234);
 
         assert_eq!(chip.v[2], 0x1);
         assert_eq!(chip.v[0xF], 0x1);
@@ -678,12 +570,12 @@ mod tests {
 
     #[test]
     fn subtracting_registers_simple_0x8XY5() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         chip.v[2] = 10;
         chip.v[3] = 5;
 
-        chip.handle_opcode(0x8235);
+        chip.decode_and_execute(0x8235);
 
         assert_eq!(chip.v[2], 5);
         assert_eq!(chip.v[0xF], 0x1);
@@ -691,12 +583,12 @@ mod tests {
 
     #[test]
     fn subtracting_registers_with_borrow_0x8XY5() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         chip.v[2] = 5;
         chip.v[3] = 10;
 
-        chip.handle_opcode(0x8235);
+        chip.decode_and_execute(0x8235);
 
         assert_eq!(chip.v[2], 251);
         assert_eq!(chip.v[0xF], 0x0);
@@ -704,29 +596,29 @@ mod tests {
 
     #[test]
     fn right_shifting_0x8XY6() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         chip.v[2] = 3;
         chip.v[3] = 5;
-        chip.handle_opcode(0x8326);
+        chip.decode_and_execute(0x8326);
         assert_eq!(chip.v[3], 0x1);
         assert_eq!(chip.v[0xF], 0x1);
 
         chip.v[2] = 3;
         chip.v[3] = 4;
-        chip.handle_opcode(0x8326);
+        chip.decode_and_execute(0x8326);
         assert_eq!(chip.v[3], 0x1);
         assert_eq!(chip.v[0xF], 0x0);
     }
 
     #[test]
     fn subtracting_y_x_simple_0x8XY7() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         chip.v[2] = 3;
         chip.v[3] = 1;
 
-        chip.handle_opcode(0x8327);
+        chip.decode_and_execute(0x8327);
 
         assert_eq!(chip.v[3], 2);
         assert_eq!(chip.v[0xF], 1);
@@ -734,12 +626,12 @@ mod tests {
 
     #[test]
     fn subtracting_y_x_with_borrow_0x8XY7() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         chip.v[2] = 3;
         chip.v[3] = 10;
 
-        chip.handle_opcode(0x8327);
+        chip.decode_and_execute(0x8327);
 
         assert_eq!(chip.v[3], 249);
         assert_eq!(chip.v[0xF], 0);
@@ -747,12 +639,12 @@ mod tests {
 
     #[test]
     fn left_shifting_0x8XYE() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         chip.v[3] = 4; //X
         chip.v[2] = 128; //Y
 
-        chip.handle_opcode(0x832E);
+        chip.decode_and_execute(0x832E);
 
         assert_eq!(chip.v[0xF], 0x1);
         assert_eq!(chip.v[3], 0x0);
@@ -760,69 +652,69 @@ mod tests {
 
     #[test]
     fn skip_if_xy_not_equal_0x9000() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
         chip.v[2] = 5;
         chip.v[3] = 5;
-        chip.handle_opcode(0x9230);
+        chip.decode_and_execute(0x9230);
 
         assert_eq!(chip.pc, 0x200);
 
         chip.v[3] = 6;
-        chip.handle_opcode(0x9230);
+        chip.decode_and_execute(0x9230);
         assert_eq!(chip.pc, 0x202);
     }
 
     #[test]
     fn set_index_register_value_0xA000() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
 
-        chip.handle_opcode(0xA001);
+        chip.decode_and_execute(0xA001);
         assert_eq!(chip.i, 1);
 
-        chip.handle_opcode(0xA123);
+        chip.decode_and_execute(0xA123);
         assert_eq!(chip.i, 291);
     }
 
     #[test]
     fn jump_to_nnn_plus_v0_0xB000() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         assert_eq!(chip.pc, 0x200);
         chip.v[0] = 0x80;
-        chip.handle_opcode(0xB080);
+        chip.decode_and_execute(0xB080);
         assert_eq!(chip.pc, 0x80 + 0x80);
     }
 
     #[test]
     fn is_key_pressed_0xE000() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         assert_eq!(chip.pc, 0x200);
 
         chip.keypad[3] = 1;
-        chip.handle_opcode(0xE39E);
+        chip.decode_and_execute(0xE39E);
         assert_eq!(chip.pc, 0x202);
     }
 
     #[test]
     fn is_key_not_pressed_0xE000() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         assert_eq!(chip.pc, 0x200);
 
         chip.keypad[3] = 1;
-        chip.handle_opcode(0xE3A1);
+        chip.decode_and_execute(0xE3A1);
         assert_eq!(chip.pc, 0x200);
 
         chip.keypad[3] = 0;
-        chip.handle_opcode(0xE3A1);
+        chip.decode_and_execute(0xE3A1);
         assert_eq!(chip.pc, 0x202);
     }
 
     #[test]
     fn set_delay_timer_0xFX07() {
-        let mut chip = create_chip();
+        let mut chip = Cpu::new();
         chip.delay_timer = 10;
 
-        chip.handle_opcode(0xFA07);
+        chip.decode_and_execute(0xFA07);
 
         assert_eq!(chip.v[10], 10);
     }

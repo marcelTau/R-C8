@@ -1,20 +1,28 @@
 #![allow(dead_code)]
 
-mod lib;
+mod chip8;
+mod cpu;
+mod graphics;
 
-use rc8::Chip8;
+use chip8::Chip8;
 
 fn main() {
     let mut chip = Chip8::new();
 
-    chip.setup_map();
-
-    chip.load_game("IBM.ch8").unwrap_or_else(|err| {
+    chip.load_program("IBM.ch8").unwrap_or_else(|err| {
         eprintln!("Error occured during loading the program: {}", err);
         std::process::exit(1);
     });
+    chip.gameloop();
 
-    chip.load_font();
+    //chip.setup_map();
 
-    chip.run();
+    //chip.load_game("IBM.ch8").unwrap_or_else(|err| {
+    //eprintln!("Error occured during loading the program: {}", err);
+    //std::process::exit(1);
+    //});
+
+    //chip.load_font();
+
+    //chip.run();
 }
