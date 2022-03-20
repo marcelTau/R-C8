@@ -6,6 +6,25 @@ use crate::graphics::Graphics;
 use rand::Rng;
 use std::collections::HashMap;
 
+const KEYMAP: [simple::Key; 16] = [
+    simple::Key::A,
+    simple::Key::S,
+    simple::Key::D,
+    simple::Key::F,
+    simple::Key::Up,
+    simple::Key::Right,
+    simple::Key::Down,
+    simple::Key::Left,
+    simple::Key::Num1,
+    simple::Key::Num2,
+    simple::Key::Num3,
+    simple::Key::Num4,
+    simple::Key::Num5,
+    simple::Key::Num6,
+    simple::Key::Num7,
+    simple::Key::Num8,
+];
+
 pub struct Cpu {
     pub graphics: [u8; ROW * COL],
     pub memory: [u8; 4096],
@@ -90,6 +109,7 @@ impl Cpu {
     pub fn decode_and_execute_graphic(&mut self, opcode: u16, graphics: Option<&mut Graphics>) {
         if opcode & 0xF000 == 0xF000 && opcode & 0x00FF == 0x0A {
             self.f_0xFX0A(opcode, &mut graphics.unwrap());
+            return;
         }
         match self.opcode_function.get(&(opcode & 0xF000)) {
             Some(func) => func(self, opcode),
@@ -376,7 +396,6 @@ impl Cpu {
 
     fn f_0xF000(&mut self, opcode: u16) {
         match opcode & 0x00FF {
-            0x07 => self.f_0xFX07(opcode),
             0x0A => todo!(),
             _ => unreachable!(),
         }
@@ -388,9 +407,21 @@ impl Cpu {
         self.v[X as usize] = self.delay_timer;
     }
 
-    fn f_0xFX0A(&mut self, opcode: u16, graphics: &mut Graphics) {
+    // 0xFX0A waits for keyboard input, and sets the value into v[X]
+    fn f_0xFX0A(&mut self, opcode: u16, graphics: &mut Graphics) -> Option<usize> {
         let X = (opcode & 0x0F00) >> 8;
-        graphics.app.clear();
+
+        while graphics.app.has_event() {
+            match graphics.app.next_event() {
+                simple::Event::Keyboard { is_down: true, key } => {
+                    let pos = KEYMAP.iter().position(|&k| k == key)?;
+                    self.keypad[X as usize] = pos as u8;
+                    println!("Found key at pos {} -> {:?}", pos, KEYMAP[pos]);
+                }
+                _ => (),
+            }
+        }
+        return None;
     }
 }
 
