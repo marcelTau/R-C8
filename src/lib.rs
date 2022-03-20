@@ -74,6 +74,7 @@ impl Chip8 {
         self.opcode_function.insert(0x5000, Chip8::f_0x5000);
         self.opcode_function.insert(0x6000, Chip8::f_0x6000);
         self.opcode_function.insert(0x7000, Chip8::f_0x7000);
+        self.opcode_function.insert(0x8000, Chip8::f_0x8000);
         self.opcode_function.insert(0xA000, Chip8::f_0xA000);
         self.opcode_function.insert(0xD000, Chip8::f_0xD000);
     }
@@ -184,6 +185,81 @@ impl Chip8 {
         let index: u16 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
         let value: u8 = (opcode & 0x00FF).try_into().unwrap();
         self.v[index as usize] += value;
+    }
+
+    // 0x8000
+    fn f_0x8000(&mut self, opcode: u16) {
+        match opcode & 0x000F {
+            0 => self.f_0x8XY0(opcode),
+            1 => self.f_0x8XY1(opcode),
+            2 => self.f_0x8XY2(opcode),
+            3 => self.f_0x8XY3(opcode),
+            4 => self.f_0x8XY4(opcode),
+            5 => self.f_0x8XY5(opcode),
+            _ => (),
+        }
+    }
+
+    // 0x8XY0 set v[X] = v[Y]
+    fn f_0x8XY0(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        let Y = (opcode & 0x00F0) >> 4;
+
+        self.v[X as usize] = self.v[Y as usize];
+    }
+
+    // 0x8XY1 sets v[X] = v[X] | v[Y]
+    fn f_0x8XY1(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        let Y = (opcode & 0x00F0) >> 4;
+
+        self.v[X as usize] |= self.v[Y as usize];
+    }
+
+    // 0x8XY2 sets v[X] = v[X] & v[Y]
+    fn f_0x8XY2(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        let Y = (opcode & 0x00F0) >> 4;
+
+        self.v[X as usize] &= self.v[Y as usize];
+    }
+
+    // 0x8XY3 sets v[X] = v[X] ^ v[Y]
+    fn f_0x8XY3(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        let Y = (opcode & 0x00F0) >> 4;
+
+        self.v[X as usize] ^= self.v[Y as usize];
+    }
+
+    // 0x8XY4 sets v[X] = v[X] + v[Y] and set v[0xF] to 1 if there is a carry
+    fn f_0x8XY4(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        let Y = (opcode & 0x00F0) >> 4;
+
+        let sum: u16 = self.v[X as usize] as u16 + self.v[Y as usize] as u16;
+
+        if sum > u8::MAX.into() {
+            self.v[X as usize] = (sum >> 8) as u8;
+            self.v[0xF] = 0x1;
+            return;
+        }
+
+        self.v[0xF] = 0x0;
+        self.v[X as usize] = sum as u8;
+    }
+
+    // 0x8XY5 sets v[X] = v[X] - v[Y] and set v[0xF] t0 0x0 if there is a borrow and to 0x1 if not
+    fn f_0x8XY5(&mut self, opcode: u16) {
+        let X = (opcode & 0x0F00) >> 8;
+        let Y = (opcode & 0x00F0) >> 4;
+
+        if self.v[X as usize] >= self.v[Y as usize] {
+            self.v[0xF] = 0x1;
+        } else {
+            self.v[0xF] = 0x0;
+        }
+        self.v[X as usize] = self.v[X as usize].wrapping_add(self.v[Y as usize].wrapping_neg());
     }
 
     //0xANNN sets self.i = NNN
@@ -436,6 +512,99 @@ mod tests {
     }
 
     #[test]
+    fn assign_value_0x8XY0() {
+        let mut chip = create_chip();
+        chip.v[3] = 4;
+        chip.handle_opcode(0x8430);
+        assert_eq!(chip.v[4], 4);
+    }
+
+    #[test]
+    fn or_value_0x8XY1() {
+        let mut chip = create_chip();
+        chip.v[8] = 10;
+        chip.v[11] = 172;
+
+        chip.handle_opcode(0x88b1);
+
+        assert_eq!(chip.v[8], 10 | 172);
+    }
+
+    #[test]
+    fn and_value_0x8XY2() {
+        let mut chip = create_chip();
+        chip.v[8] = 10;
+        chip.v[11] = 172;
+
+        chip.handle_opcode(0x88b2);
+
+        assert_eq!(chip.v[8], 10 & 172);
+    }
+
+    #[test]
+    fn xor_value_0x8XY3() {
+        let mut chip = create_chip();
+        chip.v[8] = 10;
+        chip.v[11] = 172;
+
+        chip.handle_opcode(0x88b3);
+
+        assert_eq!(chip.v[8], 10 ^ 172);
+    }
+
+    #[test]
+    fn adding_registers_simple_0x8XY4() {
+        let mut chip = create_chip();
+
+        chip.v[2] = 5;
+        chip.v[3] = 10;
+
+        chip.handle_opcode(0x8234);
+
+        assert_eq!(chip.v[2], 15);
+        assert_eq!(chip.v[0xF], 0x0);
+    }
+
+    #[test]
+    fn adding_registers_with_carry_0x8XY4() {
+        let mut chip = create_chip();
+
+        chip.v[2] = 255;
+        chip.v[3] = 1;
+
+        chip.handle_opcode(0x8234);
+
+        assert_eq!(chip.v[2], 0x1);
+        assert_eq!(chip.v[0xF], 0x1);
+    }
+
+    #[test]
+    fn subtracting_registers_simple_0x8XY5() {
+        let mut chip = create_chip();
+
+        chip.v[2] = 10;
+        chip.v[3] = 5;
+
+        chip.handle_opcode(0x8235);
+
+        assert_eq!(chip.v[2], 5);
+        assert_eq!(chip.v[0xF], 0x1);
+    }
+
+    #[test]
+    fn subtracting_registers_with_borrow_0x8XY5() {
+        let mut chip = create_chip();
+
+        chip.v[2] = 5;
+        chip.v[3] = 10;
+
+        chip.handle_opcode(0x8235);
+
+        assert_eq!(chip.v[2], 251);
+        assert_eq!(chip.v[0xF], 0x0);
+    }
+
+    #[test]
     fn set_index_register_value_0xA000() {
         let mut chip = create_chip();
 
@@ -446,12 +615,3 @@ mod tests {
         assert_eq!(chip.i, 291);
     }
 }
-
-/*
-    [x] 00E0 (clear screen)
-    [x] 1NNN (jump)
-    [x] 6XNN (set register VX)
-    [x] 7XNN (add value to register VX)
-    [x] ANNN (set index register I)
-    [x] DXYN (display/draw)
-*/
